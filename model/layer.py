@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import dgl
 import dgl.function as fn
+import numpy as np
 
 
 class CompGCNCov(nn.Module):
@@ -15,9 +16,6 @@ class CompGCNCov(nn.Module):
         self.opn = opn
 
         # relation-type specific parameter
-        # self.w_loop = self.get_param([in_channels, out_channels])  # weight matrix for self-loop
-        # self.w_in = self.get_param([in_channels, out_channels])  # weight matrix for inward direction
-        # self.w_out = self.get_param([in_channels, out_channels])  # weight matrix for outward direction
         self.w = self.get_param([3, in_channels, out_channels])  # weight matrix for 3 directions (int, out, self-loop)
         self.w_rel = self.get_param([in_channels, out_channels])  # transform embedding of relations to next layer
         self.loop_rel = self.get_param([1, in_channels])  # self-loop embedding
@@ -39,8 +37,7 @@ class CompGCNCov(nn.Module):
         edge_data = self.comp(edges.src['h'], self.rel[edge_type])  # [E, in_channel]
         msg = torch.bmm(edge_data.unsqueeze(1),
                         self.w[edge_dir.squeeze()]).squeeze()  # [E, 1, in_c] @ [E, in_c, out_c]
-        if 'norm' in edges.data:
-            msg = msg * edges.data['norm']
+        msg = msg * edges.data['norm'].reshape(-1, 1)  # [E, D] * [E, 1]
         return {'msg': msg}
 
     def reduce_func(self, nodes: dgl.NodeBatch):
@@ -54,30 +51,48 @@ class CompGCNCov(nn.Module):
         else:
             raise NotImplementedError
 
-    def forward(self, g: dgl.DGLGraph, x, rel, edge_type, edge_dir, norm=None):
+    def compute_norm(self, g: dgl.DGLGraph):
+        g.local_var()
+        in_deg = g.in_degrees(range(g.number_of_nodes())).float().numpy()
+        norm = in_deg ** -0.5
+        norm[np.isinf(norm)] = 0
+        g.ndata['xxx'] = norm
+        g.apply_edges(lambda edges: {'xxx': edges.dst['xxx'] * edges.src['xxx']})
+        norm = g.edata['xxx']
+        return norm.squeeze()
+
+    def forward(self, g: dgl.DGLGraph, x, rel_repr, edge_type, edge_dir):
         """
-        :param g: dgl Graph
+        :param g: dgl Graph, a graph without self-loop
         :param x: input node features, [V, in_channel]
-        :param rel: input relation features: [num_rel*2+1, in_channel]
+        :param rel_repr: input relation features: [num_rel*2, in_channel]
         :param edge_type: edge type, [E]
         :param edge_dir: edge direction, [E]
         :param norm: edge norm, [E, 1]
         :return: x: output node features: [V, out_channel]
-                 rel: output relation features: [num_rel*2+1, out_channel]
+                 rel: output relation features: [num_rel*2, out_channel]
         """
+        self.device = x.device
         g = g.local_var()
         g.ndata['h'] = x
-        g.edata['type'] = edge_type
-        g.edata['dir'] = edge_dir
-        if norm is not None:
-            g.edata['norm'] = norm
-        self.rel = rel
+        norm = self.compute_norm(g)
+        g.add_edges(range(g.number_of_nodes()), range(g.number_of_nodes()))  # self-loop
+        # g.edata['type'] = edge_type
+        self_loop_edge_type = torch.tensor([rel_repr.shape[0]] * g.number_of_nodes(), device=self.device)
+        self_loop_edge_dir = torch.tensor([2] * g.number_of_nodes(), device=self.device)
+        self_loop_edge_norm = torch.ones_like(self_loop_edge_dir, device=self.device, dtype=torch.float32)
+        g.edata['type'] = torch.cat([edge_type, self_loop_edge_type])
+        g.edata['dir'] = torch.cat([edge_dir, self_loop_edge_dir])
+        g.edata['norm'] = torch.cat([norm, self_loop_edge_norm])
+        # if norm is not None:
+        #     g.edata['norm'] = norm
+        self.rel = torch.cat([rel_repr, self.loop_rel], dim=0)
         g.update_all(self.message_func, fn.sum(msg='msg', out='h'), self.reduce_func)
         x = g.ndata['h']
         if self.bias is not None:
             x = x + self.bias
         x = self.bn(x)
-        return self.act(x), torch.matmul(rel, self.w_rel)
+        return self.act(x), torch.matmul(rel, self.w_rel)[:, -1]
 
 
 if __name__ == '__main__':
@@ -87,21 +102,21 @@ if __name__ == '__main__':
     g.add_nodes(5)
     g.add_edges(src, tgt)  # src -> tgt
     g.add_edges(tgt, src)  # tgt -> src
-    g.add_edges(range(g.number_of_nodes()), range(g.number_of_nodes()))  # self-loop
+    # g.add_edges(range(g.number_of_nodes()), range(g.number_of_nodes()))  # self-loop
+    #
+    # import numpy as np
+    #
+    # in_deg = g.in_degrees(range(g.number_of_nodes())).float().numpy()
+    # norm = in_deg ** -0.5
+    # norm[np.isinf(norm)] = 0
+    # g.ndata['xxx'] = norm
+    # g.apply_edges(lambda edges: {'xxx': edges.dst['xxx'] * edges.src['xxx']})
+    # norm = g.edata['xxx']
+    # print(norm)
 
-    import numpy as np
-
-    in_deg = g.in_degrees(range(g.number_of_nodes())).float().numpy()
-    norm = in_deg ** -0.5
-    norm[np.isinf(norm)] = 0
-    g.ndata['xxx'] = norm
-    g.apply_edges(lambda edges: {'xxx': edges.dst['xxx'] * edges.src['xxx']})
-    norm = g.edata['xxx']
-    print(norm)
-
-    edge_dir = torch.tensor([0] * len(src) + [1] * len(tgt) + [2] * g.number_of_nodes())
-    edge_type = torch.tensor([0, 0, 0, 1, 1] + [2, 2, 2, 3, 3] + [4] * g.number_of_nodes())
+    edge_dir = torch.tensor([0] * len(src) + [1] * len(tgt))
+    edge_type = torch.tensor([0, 0, 0, 1, 1] + [2, 2, 2, 3, 3])
     x = torch.randn([5, 10])
-    rel = torch.randn([5, 10])  # 2*2+1
+    rel = torch.randn([4, 10])  # 2*2+1
     x, rel = compgcn(g, x, rel, edge_type, edge_dir)
     print(x.shape, rel.shape)
