@@ -16,7 +16,8 @@ class CompGCNCov(nn.Module):
         self.opn = opn
 
         # relation-type specific parameter
-        self.w = self.get_param([3, in_channels, out_channels])  # weight matrix for 3 directions (int, out, self-loop)
+        self.w = self.get_param([2, in_channels, out_channels])  # weight matrix for 2 directions (int, out)
+        self.loop_w = self.get_param([in_channels, out_channels])
         self.w_rel = self.get_param([in_channels, out_channels])  # transform embedding of relations to next layer
         self.loop_rel = self.get_param([1, in_channels])  # self-loop embedding
 
@@ -52,14 +53,12 @@ class CompGCNCov(nn.Module):
             raise NotImplementedError
 
     def compute_norm(self, g: dgl.DGLGraph):
-        g.local_var()
         in_deg = g.in_degrees(range(g.number_of_nodes())).float().numpy()
         norm = in_deg ** -0.5
         norm[np.isinf(norm)] = 0
         g.ndata['xxx'] = norm
         g.apply_edges(lambda edges: {'xxx': edges.dst['xxx'] * edges.src['xxx']})
-        norm = g.edata['xxx']
-        return norm.squeeze()
+        return g.edata.pop('xxx').squeeze()
 
     def forward(self, g: dgl.DGLGraph, x, rel_repr, edge_type, edge_dir):
         """
@@ -76,23 +75,17 @@ class CompGCNCov(nn.Module):
         g = g.local_var()
         g.ndata['h'] = x
         norm = self.compute_norm(g)
-        g.add_edges(range(g.number_of_nodes()), range(g.number_of_nodes()))  # self-loop
-        # g.edata['type'] = edge_type
-        self_loop_edge_type = torch.tensor([rel_repr.shape[0]] * g.number_of_nodes(), device=self.device)
-        self_loop_edge_dir = torch.tensor([2] * g.number_of_nodes(), device=self.device)
-        self_loop_edge_norm = torch.ones_like(self_loop_edge_dir, device=self.device, dtype=torch.float32)
-        g.edata['type'] = torch.cat([edge_type, self_loop_edge_type])
-        g.edata['dir'] = torch.cat([edge_dir, self_loop_edge_dir])
-        g.edata['norm'] = torch.cat([norm, self_loop_edge_norm])
-        # if norm is not None:
-        #     g.edata['norm'] = norm
-        self.rel = torch.cat([rel_repr, self.loop_rel], dim=0)
+        g.edata['type'] = edge_type
+        g.edata['dir'] = edge_dir
+        g.edata['norm'] = norm
+        self.rel = rel_repr
         g.update_all(self.message_func, fn.sum(msg='msg', out='h'), self.reduce_func)
-        x = g.ndata['h']
+        x = g.ndata.pop('h') + torch.mm(x * self.loop_rel, self.loop_w) / 3
         if self.bias is not None:
             x = x + self.bias
         x = self.bn(x)
-        return self.act(x), torch.matmul(rel, self.w_rel)[:, -1]
+
+        return self.act(x), torch.matmul(self.rel, self.w_rel)
 
 
 if __name__ == '__main__':
@@ -113,10 +106,13 @@ if __name__ == '__main__':
     # g.apply_edges(lambda edges: {'xxx': edges.dst['xxx'] * edges.src['xxx']})
     # norm = g.edata['xxx']
     # print(norm)
-
+    g.add_edges(range(g.number_of_nodes()), range(g.number_of_nodes()))
     edge_dir = torch.tensor([0] * len(src) + [1] * len(tgt))
     edge_type = torch.tensor([0, 0, 0, 1, 1] + [2, 2, 2, 3, 3])
+    print(g.number_of_edges())
+    g.remove_edges(range(10, 15))
+    print(g.number_of_edges())
     x = torch.randn([5, 10])
     rel = torch.randn([4, 10])  # 2*2+1
-    x, rel = compgcn(g, x, rel, edge_type, edge_dir)
-    print(x.shape, rel.shape)
+    # x, rel = compgcn(g, x, rel, edge_type, edge_dir)
+    # print(x.shape, rel.shape)
