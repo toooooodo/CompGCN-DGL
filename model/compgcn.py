@@ -6,18 +6,18 @@ import torch.nn.functional as F
 
 
 class CompGCN(nn.Module):
-    def __init__(self, num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer, edge_type, edge_dir,
-                 conv_bias=True, conv_drop=0., opn='mult'):
+    def __init__(self, num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer, edge_type, edge_norm,
+                 conv_bias=True, gcn_drop=0., opn='mult'):
         super(CompGCN, self).__init__()
         self.act = torch.tanh
         self.loss = nn.BCELoss()
         self.num_ent, self.num_rel, self.num_base = num_ent, num_rel, num_base
         self.init_dim, self.gcn_dim, self.embed_dim = init_dim, gcn_dim, embed_dim
         self.conv_bias = conv_bias
-        self.conv_drop = conv_drop
+        self.gcn_drop = gcn_drop
         self.opn = opn
         self.edge_type = edge_type  # [E]
-        self.edge_dir = edge_dir  # [E]
+        self.edge_norm = edge_norm  # [E]
         self.n_layer = n_layer
 
         self.init_embed = self.get_param([self.num_ent, self.init_dim])  # initial embedding for entities
@@ -30,8 +30,8 @@ class CompGCN(nn.Module):
             # independently defining an embedding for each relation
             self.init_rel = self.get_param([self.num_rel * 2, self.init_dim])
 
-        self.conv1 = CompGCNCov(self.init_dim, self.gcn_dim, self.act, conv_bias, conv_drop, opn)
-        self.conv2 = CompGCNCov(self.gcn_dim, self.embed_dim, self.act, conv_bias, conv_drop,
+        self.conv1 = CompGCNCov(self.init_dim, self.gcn_dim, self.act, conv_bias, gcn_drop, opn)
+        self.conv2 = CompGCNCov(self.gcn_dim, self.embed_dim, self.act, conv_bias, gcn_drop,
                                 opn) if n_layer == 2 else None
         self.bias = nn.Parameter(torch.zeros(self.num_ent))
 
@@ -55,9 +55,9 @@ class CompGCN(nn.Module):
                  x: [num_ent, D]
         """
         x, r = self.init_embed, self.init_rel  # embedding of relations
-        x, r = self.conv1(g, x, r, self.edge_type, self.edge_dir)
+        x, r = self.conv1(g, x, r, self.edge_type, self.edge_norm)
         x = drop1(x)  # embeddings of entities [num_ent, dim]
-        x, r = self.conv2(g, x, r, self.edge_type, self.edge_dir) if self.n_layer == 2 else (x, r)
+        x, r = self.conv2(g, x, r, self.edge_type, self.edge_norm) if self.n_layer == 2 else (x, r)
         x = drop2(x) if self.n_layer == 2 else x
         sub_emb = torch.index_select(x, 0, subj)  # filter out embeddings of subjects in this batch
         rel_emb = torch.index_select(r, 0, rel)  # filter out embeddings of relations in this batch
@@ -66,10 +66,10 @@ class CompGCN(nn.Module):
 
 
 class CompGCN_DistMult(CompGCN):
-    def __init__(self, num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer, edge_type, edge_dir,
-                 bias=True, conv_drop=0., opn='mult', hid_drop=0.):
+    def __init__(self, num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer, edge_type, edge_norm,
+                 bias=True, gcn_drop=0., opn='mult', hid_drop=0.):
         super(CompGCN_DistMult, self).__init__(num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer,
-                                               edge_type, edge_dir, bias, conv_drop, opn)
+                                               edge_type, edge_norm, bias, gcn_drop, opn)
         self.drop = nn.Dropout(hid_drop)
 
     def forward(self, g, subj, rel):
@@ -88,8 +88,8 @@ class CompGCN_DistMult(CompGCN):
 
 
 class CompGCN_ConvE(CompGCN):
-    def __init__(self, num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer, edge_type, edge_dir,
-                 bias=True, conv_drop=0., opn='mult', hid_drop=0., input_drop=0., conve_hid_drop=0., feat_drop=0.,
+    def __init__(self, num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer, edge_type, edge_norm,
+                 bias=True, gcn_drop=0., opn='mult', hid_drop=0., input_drop=0., conve_hid_drop=0., feat_drop=0.,
                  num_filt=None, ker_sz=None, k_h=None, k_w=None):
         """
         :param num_ent: number of entities
@@ -100,9 +100,8 @@ class CompGCN_ConvE(CompGCN):
         :param embed_dim: dimension after second layer
         :param n_layer: number of layer
         :param edge_type: relation type of each edge, [E]
-        :param edge_dir: directions of each edge, [E]
         :param bias: weather to add bias
-        :param conv_drop: dropout rate in compgcncov
+        :param gcn_drop: dropout rate in compgcncov
         :param opn: combination operator
         :param hid_drop: gcn output (embedding of each entity) dropout
         :param input_drop: dropout in conve input
@@ -114,7 +113,7 @@ class CompGCN_ConvE(CompGCN):
         :param k_w: width of 2D reshape
         """
         super(CompGCN_ConvE, self).__init__(num_ent, num_rel, num_base, init_dim, gcn_dim, embed_dim, n_layer,
-                                            edge_type, edge_dir, bias, conv_drop, opn)
+                                            edge_type, edge_norm, bias, gcn_drop, opn)
         self.hid_drop, self.input_drop, self.conve_hid_drop, self.feat_drop = hid_drop, input_drop, conve_hid_drop, feat_drop
         self.num_filt = num_filt
         self.ker_sz, self.k_w, self.k_h = ker_sz, k_w, k_h
@@ -123,7 +122,7 @@ class CompGCN_ConvE(CompGCN):
         self.bn1 = torch.nn.BatchNorm2d(self.num_filt)  # do bn on output of conv
         self.bn2 = torch.nn.BatchNorm1d(self.embed_dim)
 
-        self.drop = torch.nn.Dropout(self.p.hid_drop)  # gcn output dropout
+        self.drop = torch.nn.Dropout(self.hid_drop)  # gcn output dropout
         self.input_drop = torch.nn.Dropout(self.input_drop)  # stacked input dropout
         self.feature_drop = torch.nn.Dropout(self.feat_drop)  # feature map dropout
         self.hidden_drop = torch.nn.Dropout(self.conve_hid_drop)  # hidden layer dropout
@@ -180,12 +179,18 @@ if __name__ == '__main__':
     g.add_nodes(5)
     g.add_edges(src, tgt)  # src -> tgt
     g.add_edges(tgt, src)  # tgt -> src
-    edge_dir = torch.tensor([0] * len(src) + [1] * len(tgt))
     edge_type = torch.tensor([0, 0, 0, 1, 1] + [2, 2, 2, 3, 3])
-    # compgcn = CompGCN(num_ent=5, num_rel=2, num_base=2, init_dim=10, gcn_dim=5, embed_dim=3, n_layer=2,
-    #                   edge_type=edge_type, edge_dir=edge_dir)
+    import numpy as np
+    in_deg = g.in_degrees(range(g.number_of_nodes())).float().numpy()
+    norm = in_deg ** -0.5
+    norm[np.isinf(norm)] = 0
+    g.ndata['xxx'] = norm
+    g.apply_edges(lambda edges: {'xxx': edges.dst['xxx'] * edges.src['xxx']})
+    edge_norm = g.edata.pop('xxx').squeeze()
+    print(edge_norm.dtype)
+
     distmult = CompGCN_DistMult(num_ent=5, num_rel=2, num_base=2, init_dim=10, gcn_dim=5, embed_dim=3, n_layer=2,
-                                edge_type=edge_type, edge_dir=edge_dir)
+                                edge_type=edge_type, edge_norm=edge_norm)
     drop = nn.Dropout(0.1)
     score = distmult(g, torch.tensor([0, 4]), torch.tensor([0, 1]))
     print(score)
