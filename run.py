@@ -58,7 +58,7 @@ class Runner(object):
                 self.best_epoch = epoch
                 self.save_model(save_path)
             print(
-                f"[Epoch {epoch}]: Training Loss: {train_loss:.5}, Valid MRR: {val_results['mrr']:.5}, Best Valid MRR: {self.best_val_mrr:.5}, Cost: {time.time()-start_time:.2f}s")
+                f"[Epoch {epoch}]: Training Loss: {train_loss:.5}, Valid MRR: {val_results['mrr']:.5}, Best Valid MRR: {self.best_val_mrr:.5}, Cost: {time.time() - start_time:.2f}s")
         pprint(vars(self.p))
         self.load_model(save_path)
         print(f'Loading best model in {self.best_epoch} epoch, Evaluating on Test data')

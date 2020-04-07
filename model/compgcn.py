@@ -23,14 +23,13 @@ class CompGCN(nn.Module):
         self.init_embed = self.get_param([self.num_ent, self.init_dim])  # initial embedding for entities
         if self.num_base > 0:
             # linear combination of a set of basis vectors
-            self.init_base = self.get_param([self.num_base, self.init_dim])
-            self.rel_wt = self.get_param([self.num_rel * 2, self.num_base])
-            self.init_rel = torch.mm(self.rel_wt, self.init_base)
+            self.init_rel = self.get_param([self.num_base, self.init_dim])
         else:
             # independently defining an embedding for each relation
             self.init_rel = self.get_param([self.num_rel * 2, self.init_dim])
 
-        self.conv1 = CompGCNCov(self.init_dim, self.gcn_dim, self.act, conv_bias, gcn_drop, opn)
+        self.conv1 = CompGCNCov(self.init_dim, self.gcn_dim, self.act, conv_bias, gcn_drop, opn, num_base=self.num_base,
+                                num_rel=self.num_rel)
         self.conv2 = CompGCNCov(self.gcn_dim, self.embed_dim, self.act, conv_bias, gcn_drop,
                                 opn) if n_layer == 2 else None
         self.bias = nn.Parameter(torch.zeros(self.num_ent))
@@ -181,6 +180,7 @@ if __name__ == '__main__':
     g.add_edges(tgt, src)  # tgt -> src
     edge_type = torch.tensor([0, 0, 0, 1, 1] + [2, 2, 2, 3, 3])
     import numpy as np
+
     in_deg = g.in_degrees(range(g.number_of_nodes())).float().numpy()
     norm = in_deg ** -0.5
     norm[np.isinf(norm)] = 0

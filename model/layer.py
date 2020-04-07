@@ -6,7 +6,8 @@ import numpy as np
 
 
 class CompGCNCov(nn.Module):
-    def __init__(self, in_channels, out_channels, act=lambda x: x, bias=True, drop_rate=0., opn='corr'):
+    def __init__(self, in_channels, out_channels, act=lambda x: x, bias=True, drop_rate=0., opn='corr', num_base=-1,
+                 num_rel=None):
         super(CompGCNCov, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -25,6 +26,10 @@ class CompGCNCov(nn.Module):
         self.drop = nn.Dropout(drop_rate)
         self.bn = torch.nn.BatchNorm1d(out_channels)
         self.bias = nn.Parameter(torch.zeros(out_channels)) if bias else None
+        if num_base > 0:
+            self.rel_wt = self.get_param([num_rel * 2, num_base])
+        else:
+            self.rel_wt = None
 
     def get_param(self, shape):
         param = nn.Parameter(torch.Tensor(*shape))
@@ -74,7 +79,8 @@ class CompGCNCov(nn.Module):
         """
         :param g: dgl Graph, a graph without self-loop
         :param x: input node features, [V, in_channel]
-        :param rel_repr: input relation features: [num_rel*2, in_channel]
+        :param rel_repr: input relation features: 1. not using bases: [num_rel*2, in_channel]
+                                                  2. using bases: [num_base, in_channel]
         :param edge_type: edge type, [E]
         :param edge_norm: edge normalization, [E]
         :return: x: output node features: [V, out_channel]
@@ -85,7 +91,10 @@ class CompGCNCov(nn.Module):
         g.ndata['h'] = x
         g.edata['type'] = edge_type
         g.edata['norm'] = edge_norm
-        self.rel = rel_repr
+        if self.rel_wt is None:
+            self.rel = rel_repr
+        else:
+            self.rel = torch.mm(self.rel_wt, rel_repr)  # [num_rel*2, num_base] @ [num_base, in_c]
         g.update_all(self.message_func, fn.sum(msg='msg', out='h'), self.reduce_func)
         x = g.ndata.pop('h') + torch.mm(self.comp(x, self.loop_rel), self.loop_w) / 3
         if self.bias is not None:
