@@ -24,8 +24,8 @@ class Runner(object):
         if self.p.gpu != -1 and torch.cuda.is_available():
             self.device = torch.device(f'cuda:{self.p.gpu}')
             # -------------------------------
-            torch.cuda.set_rng_state(torch.cuda.get_rng_state())
-            torch.backends.cudnn.deterministic = True
+            # torch.cuda.set_rng_state(torch.cuda.get_rng_state())
+            # torch.backends.cudnn.deterministic = True
             # -------------------------------
         else:
             self.device = torch.device('cpu')
@@ -49,6 +49,7 @@ class Runner(object):
             print('Successfully Loaded previous model')
 
         for epoch in range(self.p.max_epochs):
+            start_time = time.time()
             train_loss = self.train()
             val_results = self.evaluate('valid')
             if val_results['mrr'] > self.best_val_mrr:
@@ -57,7 +58,7 @@ class Runner(object):
                 self.best_epoch = epoch
                 self.save_model(save_path)
             print(
-                f"[Epoch {epoch}]: Training Loss: {train_loss:.5}, Valid MRR: {val_results['mrr']:.5}, Best Valid MRR: {self.best_val_mrr:.5}")
+                f"[Epoch {epoch}]: Training Loss: {train_loss:.5}, Valid MRR: {val_results['mrr']:.5}, Best Valid MRR: {self.best_val_mrr:.5}, Cost: {time.time()-start_time:.2f}s")
         pprint(vars(self.p))
         self.load_model(save_path)
         print(f'Loading best model in {self.best_epoch} epoch, Evaluating on Test data')
@@ -254,10 +255,9 @@ if __name__ == '__main__':
     parser.add_argument('--data', dest='dataset', default='FB15k-237', help='Dataset to use, default: FB15k-237')
     parser.add_argument('--score_func', dest='score_func', default='conve',
                         help='Score Function for Link prediction')
-    parser.add_argument('--opn', dest='opn', default='mult', help='Composition Operation to be used in CompGCN')
+    parser.add_argument('--opn', dest='opn', default='corr', help='Composition Operation to be used in CompGCN')
 
     parser.add_argument('--batch', dest='batch_size', default=256, type=int, help='Batch size')
-    # parser.add_argument('--gamma', type=float, default=40.0, help='Margin')
     parser.add_argument('--gpu', type=int, default=0, help='Set GPU Ids : Eg: For CPU = -1, For Single GPU = 0')
     parser.add_argument('--epoch', dest='max_epochs', type=int, default=500, help='Number of epochs')
     parser.add_argument('--l2', type=float, default=0.0, help='L2 Regularization for Optimizer')

@@ -16,7 +16,6 @@ class CompGCNCov(nn.Module):
         self.opn = opn
 
         # relation-type specific parameter
-        # self.w = self.get_param([2, in_channels, out_channels])  # weight matrix for 2 directions (int, out)
         self.in_w = self.get_param([in_channels, out_channels])
         self.out_w = self.get_param([in_channels, out_channels])
         self.loop_w = self.get_param([in_channels, out_channels])
@@ -67,7 +66,7 @@ class CompGCNCov(nn.Module):
         elif self.opn == 'sub':
             return h - edge_data
         elif self.opn == 'corr':
-            return ccorr(h, edge_data)
+            return ccorr(h, edge_data.expand_as(h))
         else:
             raise KeyError(f'composition operator {self.opn} not recognized.')
 
@@ -84,12 +83,11 @@ class CompGCNCov(nn.Module):
         self.device = x.device
         g = g.local_var()
         g.ndata['h'] = x
-        # norm = self.compute_norm(g)
         g.edata['type'] = edge_type
         g.edata['norm'] = edge_norm
         self.rel = rel_repr
         g.update_all(self.message_func, fn.sum(msg='msg', out='h'), self.reduce_func)
-        x = g.ndata.pop('h') + torch.mm(x * self.loop_rel, self.loop_w) / 3
+        x = g.ndata.pop('h') + torch.mm(self.comp(x, self.loop_rel), self.loop_w) / 3
         if self.bias is not None:
             x = x + self.bias
         x = self.bn(x)

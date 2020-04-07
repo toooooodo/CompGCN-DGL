@@ -19,9 +19,9 @@ def process(dataset, num_rel):
             sr2o[(obj, rel + num_rel)].add(subj)
     sr2o_all = {k: list(v) for k, v in sr2o.items()}
     triplets = ddict(list)
-    for subj, rel, obj in dataset['train']:
+
+    for (subj, rel), obj in sr2o_train.items():
         triplets['train'].append({'triple': (subj, rel, -1), 'label': sr2o_train[(subj, rel)]})
-        triplets['train'].append({'triple': (obj, rel + num_rel, -1), 'label': sr2o_train[(obj, rel + num_rel)]})
     for split in ['valid', 'test']:
         for subj, rel, obj in dataset[split]:
             triplets[f"{split}_tail"].append({'triple': (subj, rel, obj), 'label': sr2o_all[(subj, rel)]})
