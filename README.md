@@ -34,5 +34,7 @@ python run.py --score_func conve --opn corr --gpu 0 --epoch 500 --batch 256 --n_
 model | MRR | MR | Hits@1 | Hits@3 | Hits@10
 :-: | :-: | :-: | :-: | :-: | :-: 
 Conve-mult | 0.35516 | 222 | 0.26337 | 0.39021 | 0.53767
-Conve-corr | 0.3534 | 199 | 0.26146 | 0.38778 | 0.53791
+Conve-corr | 0.35340 | 199 | 0.26146 | 0.38778 | 0.53791
+DistMult-mult | 0.33590 | 234 | 0.24697 | 0.36656 | 0.51639
+DistMult-corr | 0.33680 | 242 | 0.24875 | 0.36624 | 0.51575
 
